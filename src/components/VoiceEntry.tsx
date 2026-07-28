@@ -85,9 +85,48 @@ function speechErrorMessage(error: string, diagnostic?: MicPermissionDiagnostic)
   return `خطای صدا: ${error}`;
 }
 
+// Decode any recorded container and re-encode as 16 kHz mono 16-bit WAV,
+// the format Avanegar (آوانگار) accepts.
+async function toWav(blob: Blob): Promise<ArrayBuffer> {
+  const AC: typeof AudioContext =
+    window.AudioContext ??
+    (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  const ctx = new AC();
+  const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
+  await ctx.close();
+
+  const target = 16000;
+  const src = decoded.getChannelData(0);
+  const ratio = decoded.sampleRate / target;
+  const length = Math.floor(src.length / ratio);
+  const out = new Int16Array(length);
+  for (let i = 0; i < length; i++) {
+    const s = Math.max(-1, Math.min(1, src[Math.floor(i * ratio)]));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+
+  const buffer = new ArrayBuffer(44 + out.length * 2);
+  const view = new DataView(buffer);
+  const str = (off: number, s: string) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
+  };
+  str(0, "RIFF");
+  view.setUint32(4, 36 + out.length * 2, true);
+  str(8, "WAVEfmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, target, true);
+  view.setUint32(28, target * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  str(36, "data");
+  view.setUint32(40, out.length * 2, true);
+  new Int16Array(buffer, 44).set(out);
+  return buffer;
+}
+
 export function VoiceEntry() {
-  // Decode any recorded container and re-encode as 16 kHz mono 16-bit WAV,
-  // the format Avanegar (آوانگار) accepts.
   const [open, setOpen] = useState(false);
   const [listening, setListening] = useState(false);
   const [micReady, setMicReady] = useState(false);
