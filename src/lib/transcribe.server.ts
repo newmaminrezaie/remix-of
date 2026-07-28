@@ -32,15 +32,30 @@ export async function transcribeAudio(base64: string, mime: string): Promise<str
     throw new Error("فرمت صدا پشتیبانی نمی‌شود، دوباره ضبط کنید.");
   }
 
-  const res = await fetch(AVANEGAR_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "gateway-system": "sahab",
-      "gateway-token": AVANEGAR_TOKEN,
-    },
-    body: JSON.stringify({ language: "fa", data: clean }),
-  });
+  let res: Response;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60_000);
+    try {
+      res = await fetch(AVANEGAR_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "gateway-system": "sahab",
+          "gateway-token": AVANEGAR_TOKEN,
+        },
+        body: JSON.stringify({ language: "fa", data: clean }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (err) {
+    console.error("avanegar fetch failed", err);
+    throw new Error(
+      "اتصال به سرویس آوانگار برقرار نشد. این سرویس فقط از سرور ایران (VPS) در دسترس است؛ در محیط پیش‌نمایش کار نمی‌کند. فعلاً از ورود متنی استفاده کنید.",
+    );
+  }
 
   const text = await res.text();
   if (!res.ok) {
