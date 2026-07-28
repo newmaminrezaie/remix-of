@@ -86,7 +86,8 @@ function speechErrorMessage(error: string, diagnostic?: MicPermissionDiagnostic)
 }
 
 export function VoiceEntry() {
-  // (toWav helper defined above)
+  // Decode any recorded container and re-encode as 16 kHz mono 16-bit WAV,
+  // the format Avanegar (آوانگار) accepts.
   const [open, setOpen] = useState(false);
   const [listening, setListening] = useState(false);
   const [micReady, setMicReady] = useState(false);
