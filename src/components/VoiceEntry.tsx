@@ -96,6 +96,12 @@ export function VoiceEntry() {
       setError("این مرورگر از تشخیص صدا پشتیبانی نمی‌کند. لطفاً از Chrome استفاده کنید.");
       return;
     }
+    if (typeof window !== "undefined" && !window.isSecureContext) {
+      setError(
+        "برای استفاده از میکروفون باید سایت با HTTPS باز شود (آدرس امن). با http:// کروم دسترسی میکروفون را رد می‌کند.",
+      );
+      return;
+    }
     reset();
     const rec = new SRCtor();
     rec.lang = "fa-IR";
@@ -112,7 +118,19 @@ export function VoiceEntry() {
       setTranscript((finalText + " " + interim).trim());
     };
     rec.onerror = (ev: any) => {
-      setError(ev.error === "not-allowed" ? "دسترسی به میکروفون رد شد" : `خطای صدا: ${ev.error}`);
+      const map: Record<string, string> = {
+        "not-allowed":
+          "دسترسی به میکروفون داده نشد. اگر سایت با http:// باز شده، کروم اجازه نمی‌دهد؛ با HTTPS باز کنید. یا در قفل کنار آدرس، Microphone را Allow کنید.",
+        "service-not-allowed":
+          "سرویس تشخیص گفتار در دسترس نیست. مطمئن شوید سایت با HTTPS باز شده و اینترنت وصل است.",
+        "no-speech": "صدایی شنیده نشد، دوباره تلاش کنید.",
+        network: "اتصال اینترنت برای تشخیص گفتار لازم است.",
+        "audio-capture": "میکروفونی پیدا نشد.",
+        aborted: "",
+      };
+      const msg = map[ev.error];
+      if (msg === "") return;
+      setError(msg ?? `خطای صدا: ${ev.error}`);
       setListening(false);
     };
     rec.onend = () => {
@@ -145,7 +163,9 @@ export function VoiceEntry() {
         type="button"
         onClick={() => {
           setOpen(true);
-          setTimeout(start, 150);
+          // must run in the same user-gesture tick, otherwise Chrome on
+          // Android rejects the mic with "not-allowed"
+          start();
         }}
         className="group flex w-full items-center gap-4 rounded-3xl bg-gradient-to-l from-violet-500 to-fuchsia-600 p-5 text-white shadow-soft active:scale-[0.99]"
       >
