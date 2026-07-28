@@ -20,10 +20,71 @@ type SR = {
     stop: () => void;
   };
 };
+type RecognitionInstance = InstanceType<SR>;
+type MicPermissionDiagnostic = {
+  secure: boolean;
+  permission: PermissionState | "unsupported" | "unknown";
+  hasMediaDevices: boolean;
+};
+
 function getSR(): SR | null {
   if (typeof window === "undefined") return null;
   const w = window as unknown as { webkitSpeechRecognition?: SR; SpeechRecognition?: SR };
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+}
+
+async function getMicPermissionDiagnostic(): Promise<MicPermissionDiagnostic> {
+  if (typeof window === "undefined" || typeof navigator === "undefined") {
+    return { secure: false, permission: "unknown", hasMediaDevices: false };
+  }
+
+  let permission: MicPermissionDiagnostic["permission"] = "unsupported";
+  if (navigator.permissions?.query) {
+    try {
+      const status = await navigator.permissions.query({ name: "microphone" as PermissionName });
+      permission = status.state;
+    } catch {
+      permission = "unknown";
+    }
+  }
+
+  return {
+    secure: window.isSecureContext,
+    permission,
+    hasMediaDevices: !!navigator.mediaDevices?.getUserMedia,
+  };
+}
+
+function speechErrorMessage(
+  error: string,
+  diagnostic?: MicPermissionDiagnostic,
+): string | null {
+  if (error === "aborted") return null;
+  if (error === "no-speech") return "صدایی شنیده نشد، دوباره تلاش کنید.";
+  if (error === "network") return "اتصال اینترنت برای تشخیص گفتار لازم است.";
+  if (error === "audio-capture") return "میکروفونی پیدا نشد.";
+
+  if (error === "not-allowed" || error === "service-not-allowed") {
+    if (diagnostic && !diagnostic.secure) {
+      return "مجوز میکروفون ممکن است در تنظیمات Allow باشد، اما Chrome روی موبایل ضبط صدا را فقط روی آدرس امن HTTPS فعال می‌کند. برنامه را با دامنه HTTPS باز کنید، نه با http یا IP مستقیم.";
+    }
+
+    if (diagnostic?.permission === "denied") {
+      return "مجوز میکروفون برای این سایت در Chrome رد شده است. از قفل کنار آدرس، Microphone را روی Allow بگذارید و صفحه را دوباره باز کنید.";
+    }
+
+    if (diagnostic?.permission === "granted") {
+      return "مجوز میکروفون داده شده، اما سرویس تبدیل گفتار Chrome شروع نشد. معمولاً با دامنه HTTPS، آپدیت Chrome و Google app، خاموش کردن VPN/Private DNS، یا پاک کردن Site settings همین سایت حل می‌شود.";
+    }
+
+    if (diagnostic && !diagnostic.hasMediaDevices) {
+      return "این نسخه Chrome دسترسی ضبط صدا را برای این آدرس فعال نکرده است. برنامه را با دامنه HTTPS و Chrome به‌روز باز کنید.";
+    }
+
+    return "Chrome اجازه شروع تشخیص صدا را نداد. اگر مجوز را داده‌اید، حتماً برنامه را با دامنه HTTPS باز کنید و سپس صفحه را دوباره بارگذاری کنید.";
+  }
+
+  return `خطای صدا: ${error}`;
 }
 
 export function VoiceEntry() {
@@ -32,7 +93,7 @@ export function VoiceEntry() {
   const [transcript, setTranscript] = useState("");
   const [parsed, setParsed] = useState<ParsedDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const recRef = useRef<ReturnType<SR["prototype"]["start"]> extends never ? unknown : any>(null);
+  const recRef = useRef<RecognitionInstance | null>(null);
   const qc = useQueryClient();
 
   const supported = !!getSR();
@@ -118,20 +179,17 @@ export function VoiceEntry() {
       setTranscript((finalText + " " + interim).trim());
     };
     rec.onerror = (ev: any) => {
-      const map: Record<string, string> = {
-        "not-allowed":
-          "دسترسی به میکروفون داده نشد. اگر سایت با http:// باز شده، کروم اجازه نمی‌دهد؛ با HTTPS باز کنید. یا در قفل کنار آدرس، Microphone را Allow کنید.",
-        "service-not-allowed":
-          "سرویس تشخیص گفتار در دسترس نیست. مطمئن شوید سایت با HTTPS باز شده و اینترنت وصل است.",
-        "no-speech": "صدایی شنیده نشد، دوباره تلاش کنید.",
-        network: "اتصال اینترنت برای تشخیص گفتار لازم است.",
-        "audio-capture": "میکروفونی پیدا نشد.",
-        aborted: "",
-      };
-      const msg = map[ev.error];
-      if (msg === "") return;
-      setError(msg ?? `خطای صدا: ${ev.error}`);
       setListening(false);
+      if (ev.error === "not-allowed" || ev.error === "service-not-allowed") {
+        void getMicPermissionDiagnostic().then((diagnostic) => {
+          const msg = speechErrorMessage(ev.error, diagnostic);
+          if (msg) setError(msg);
+        });
+        return;
+      }
+
+      const msg = speechErrorMessage(ev.error);
+      if (msg) setError(msg);
     };
     rec.onend = () => {
       setListening(false);
@@ -139,8 +197,16 @@ export function VoiceEntry() {
       if (text) parseMut.mutate(text);
     };
     recRef.current = rec;
-    rec.start();
-    setListening(true);
+    try {
+      rec.start();
+      setListening(true);
+    } catch (e) {
+      setListening(false);
+      const message = e instanceof Error ? e.message : "start-failed";
+      void getMicPermissionDiagnostic().then((diagnostic) => {
+        setError(speechErrorMessage("not-allowed", diagnostic) ?? `خطای صدا: ${message}`);
+      });
+    }
   }
 
   function stop() {
