@@ -7,8 +7,10 @@ import { getCurrentUser } from "./auth.server";
 const REQUESTY_API_KEY =
   "rqsty-sk-yDk9nyFNQo2tQy/z+RGheQFtCltlzVli1jZlR9U3gy5RuYZmfdX41DPTxoKULGfVVI0Fs3JnBSBjEM4M0lxmcT0oP6dPOr7jKzhdqh6/KwY=";
 const REQUESTY_URL = "https://router.requesty.ai/v1/chat/completions";
-// Fast, cheap, reliable JSON + Persian. Change here if you want to try another.
-const MODEL = "openai/gpt-4o-mini";
+// Free model on Requesty (no per-token cost), good Persian + JSON quality.
+const MODEL = "nvidia/nemotron-3-super-120b-a12b";
+// Fallback if the primary free model is unavailable.
+const FALLBACK_MODEL = "google/gemma-4-31b-it";
 
 const SYSTEM_PROMPT = `شما یک دستیار حسابداری فارسی هستید که گفتار کاربر را به یک سند حسابداری ساختاریافته تبدیل می‌کنید.
 
@@ -63,22 +65,26 @@ export const parseSpeechToDoc = createServerFn({ method: "POST" })
     const me = await getCurrentUser();
     if (!me) throw redirect({ to: "/login" });
 
-    const res = await fetch(REQUESTY_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${REQUESTY_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        temperature: 0,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: data.text },
-        ],
-      }),
-    });
+    const call = (model: string) =>
+      fetch(REQUESTY_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${REQUESTY_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: SYSTEM_PROMPT },
+            { role: "user", content: data.text },
+          ],
+        }),
+      });
+
+    let res = await call(MODEL);
+    if (!res.ok) res = await call(FALLBACK_MODEL);
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
