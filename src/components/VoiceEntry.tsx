@@ -187,9 +187,14 @@ export function VoiceEntry() {
   }
 
   function start() {
+    if (mode === "server") {
+      void startServerRecording();
+      return;
+    }
     const SRCtor = getSR();
     if (!SRCtor) {
-      setError("این مرورگر از تشخیص صدا پشتیبانی نمی‌کند. لطفاً از Chrome استفاده کنید.");
+      setMode("server");
+      void startServerRecording();
       return;
     }
     if (typeof window !== "undefined" && !window.isSecureContext) {
@@ -221,9 +226,21 @@ export function VoiceEntry() {
       setListening(false);
       if (ev.error === "not-allowed" || ev.error === "service-not-allowed") {
         void getMicPermissionDiagnostic().then((diagnostic) => {
-          const msg = speechErrorMessage(ev.error, diagnostic);
-          if (msg) setError(msg);
+          if (diagnostic.permission === "denied" || !diagnostic.secure) {
+            const msg = speechErrorMessage(ev.error, diagnostic);
+            if (msg) setError(msg);
+            return;
+          }
+          // Permission is fine — Chrome's Google speech service is unreachable.
+          // Switch to recording the audio and transcribing it on our server.
+          setMode("server");
+          void startServerRecording();
         });
+        return;
+      }
+      if (ev.error === "network") {
+        setMode("server");
+        void startServerRecording();
         return;
       }
 
@@ -249,10 +266,76 @@ export function VoiceEntry() {
   }
 
   function stop() {
+    if (mode === "server") {
+      try {
+        mediaRef.current?.stop();
+      } catch {
+        setListening(false);
+      }
+      return;
+    }
     try {
       recRef.current?.stop();
     } catch {
       return;
+    }
+  }
+
+  async function startServerRecording() {
+    setError(null);
+    setTranscript("");
+    setParsed(null);
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setError("این مرورگر امکان ضبط صدا ندارد. لطفاً متن را دستی بنویسید.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = ["audio/webm", "audio/mp4", "audio/ogg"].find(
+        (t) => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(t),
+      );
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      chunksRef.current = [];
+      mr.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      mr.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setListening(false);
+        const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
+        void uploadForTranscription(blob);
+      };
+      mediaRef.current = mr;
+      mr.start();
+      setMicReady(true);
+      setListening(true);
+    } catch {
+      const diagnostic = await getMicPermissionDiagnostic();
+      setError(speechErrorMessage("not-allowed", diagnostic));
+    }
+  }
+
+  async function uploadForTranscription(blob: Blob) {
+    if (blob.size < 2048) {
+      setError("ضبط خیلی کوتاه بود، دوباره تلاش کنید.");
+      return;
+    }
+    setUploading(true);
+    try {
+      const buf = new Uint8Array(await blob.arrayBuffer());
+      let bin = "";
+      for (let i = 0; i < buf.length; i += 0x8000) {
+        bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+      }
+      const res = await transcribeSpeech({
+        data: { audio_base64: btoa(bin), mime: blob.type || "audio/webm" },
+      });
+      setTranscript(res.text);
+      parseMut.mutate(res.text);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "خطا در تبدیل گفتار");
+    } finally {
+      setUploading(false);
     }
   }
 
