@@ -401,12 +401,12 @@ export function VoiceEntry() {
             </div>
 
             {!supported && (
-              <div className="rounded-xl bg-rose-50 p-3 text-sm text-rose-800">
-                این مرورگر از تشخیص صدا پشتیبانی نمی‌کند. از Google Chrome روی اندروید استفاده کنید.
+              <div className="mb-2 rounded-xl bg-amber-50 p-3 text-xs text-amber-900">
+                تشخیص گفتار مرورگر در دسترس نیست؛ صدا ضبط و روی سرور تبدیل می‌شود.
               </div>
             )}
 
-            {supported && (
+            {true && (
               <>
                 <div className="flex flex-col items-center gap-3 py-3">
                   <button
@@ -439,14 +439,18 @@ export function VoiceEntry() {
                       onClick={start}
                       className="grid h-24 w-24 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg disabled:opacity-40"
                       aria-label="ضبط"
-                      disabled={!micReady || parseMut.isPending || saveMut.isPending}
+                      disabled={!micReady || uploading || parseMut.isPending || saveMut.isPending}
                     >
                       <Mic className="h-10 w-10" />
                     </button>
                   )}
                   <div className="text-xs text-muted-foreground">
                     {listening
-                      ? "در حال شنیدن... حرف بزنید"
+                      ? mode === "server"
+                        ? "در حال ضبط... بعد از حرف زدن، دکمه توقف را بزنید"
+                        : "در حال شنیدن... حرف بزنید"
+                      : uploading
+                        ? "در حال تبدیل صدا به متن..."
                       : checkingMic
                         ? "در حال درخواست دسترسی میکروفون..."
                         : parseMut.isPending
@@ -457,6 +461,29 @@ export function VoiceEntry() {
                               ? "حالا دکمه بزرگ ضبط را بزنید"
                               : "اول دکمه کوچک میکروفون را بزنید"}
                   </div>
+                </div>
+
+                <div className="mt-3 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const t = manual.trim();
+                      if (!t) return;
+                      setError(null);
+                      setTranscript(t);
+                      parseMut.mutate(t);
+                    }}
+                    disabled={parseMut.isPending || saveMut.isPending || !manual.trim()}
+                    className="rounded-xl bg-secondary px-3 py-2 text-xs font-black text-secondary-foreground disabled:opacity-40"
+                  >
+                    ثبت متن
+                  </button>
+                  <input
+                    value={manual}
+                    onChange={(e) => setManual(e.target.value)}
+                    placeholder="یا اینجا بنویسید: توت خشک نهصد تومان فروختم"
+                    className="flex-1 rounded-xl border border-border bg-background p-2 text-right text-sm"
+                  />
                 </div>
 
                 {transcript && (
