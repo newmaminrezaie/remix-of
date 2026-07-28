@@ -86,6 +86,7 @@ function speechErrorMessage(error: string, diagnostic?: MicPermissionDiagnostic)
 }
 
 export function VoiceEntry() {
+  // (helpers defined below the component)
   const [open, setOpen] = useState(false);
   const [listening, setListening] = useState(false);
   const [micReady, setMicReady] = useState(false);
