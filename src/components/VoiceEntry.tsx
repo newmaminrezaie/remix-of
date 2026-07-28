@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Mic, Square, Sparkles, X, Check, Loader2 } from "lucide-react";
 import { parseSpeechToDoc, type ParsedDoc } from "@/lib/ai-parse.functions";
+import { transcribeSpeech } from "@/lib/transcribe.functions";
 import { createSale, createPurchase } from "@/lib/documents.functions";
 import { listCustomers, saveCustomer } from "@/lib/customers.functions";
 import { formatToman, toFa } from "@/lib/format";
@@ -90,9 +91,14 @@ export function VoiceEntry() {
   const [micReady, setMicReady] = useState(false);
   const [checkingMic, setCheckingMic] = useState(false);
   const [transcript, setTranscript] = useState("");
+  const [manual, setManual] = useState("");
+  const [mode, setMode] = useState<"browser" | "server">("browser");
+  const [uploading, setUploading] = useState(false);
   const [parsed, setParsed] = useState<ParsedDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
   const recRef = useRef<RecognitionInstance | null>(null);
+  const mediaRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
   const qc = useQueryClient();
 
   const supported = !!getSR();
