@@ -55,10 +55,7 @@ async function getMicPermissionDiagnostic(): Promise<MicPermissionDiagnostic> {
   };
 }
 
-function speechErrorMessage(
-  error: string,
-  diagnostic?: MicPermissionDiagnostic,
-): string | null {
+function speechErrorMessage(error: string, diagnostic?: MicPermissionDiagnostic): string | null {
   if (error === "aborted") return null;
   if (error === "no-speech") return "صدایی شنیده نشد، دوباره تلاش کنید.";
   if (error === "network") return "اتصال اینترنت برای تشخیص گفتار لازم است.";
@@ -90,6 +87,8 @@ function speechErrorMessage(
 export function VoiceEntry() {
   const [open, setOpen] = useState(false);
   const [listening, setListening] = useState(false);
+  const [micReady, setMicReady] = useState(false);
+  const [checkingMic, setCheckingMic] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [parsed, setParsed] = useState<ParsedDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -114,10 +113,7 @@ export function VoiceEntry() {
         const cust = found ?? (await saveCustomer({ data: { name } }));
         customer_id = cust.id;
       }
-      const total = p.items.reduce(
-        (s, it) => s + Math.round(it.quantity * it.unit_price_toman),
-        0,
-      );
+      const total = p.items.reduce((s, it) => s + Math.round(it.quantity * it.unit_price_toman), 0);
       const paid_toman =
         p.paid_toman != null ? Math.min(p.paid_toman, total) : p.kind === "sale" ? 0 : total;
       const items = p.items.map((it) => ({
@@ -151,6 +147,39 @@ export function VoiceEntry() {
     setListening(false);
   }
 
+  async function requestMicAccess() {
+    setError(null);
+    if (typeof window !== "undefined" && !window.isSecureContext) {
+      setError(
+        "برای استفاده از میکروفون باید سایت با HTTPS باز شود (آدرس امن). با http:// کروم دسترسی میکروفون را رد می‌کند.",
+      );
+      return;
+    }
+
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setError(
+        "این مرورگر اجازه درخواست مستقیم میکروفون را نمی‌دهد. از Chrome به‌روز استفاده کنید.",
+      );
+      return;
+    }
+
+    setCheckingMic(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
+      setMicReady(true);
+      setError(null);
+    } catch (e) {
+      const diagnostic = await getMicPermissionDiagnostic();
+      const message = e instanceof DOMException ? e.name : "not-allowed";
+      setError(
+        speechErrorMessage(message === "NotAllowedError" ? "not-allowed" : message, diagnostic),
+      );
+    } finally {
+      setCheckingMic(false);
+    }
+  }
+
   function start() {
     const SRCtor = getSR();
     if (!SRCtor) {
@@ -163,13 +192,17 @@ export function VoiceEntry() {
       );
       return;
     }
+    if (!micReady) {
+      setError("اول با دکمه کوچک، دسترسی میکروفون را فعال کنید؛ بعد دکمه بزرگ ضبط را بزنید.");
+      return;
+    }
     reset();
     const rec = new SRCtor();
     rec.lang = "fa-IR";
     rec.continuous = false;
     rec.interimResults = true;
     let finalText = "";
-    rec.onresult = (e: any) => {
+    rec.onresult = (e) => {
       let interim = "";
       for (let i = 0; i < e.results.length; i++) {
         const r = e.results[i];
@@ -178,7 +211,7 @@ export function VoiceEntry() {
       }
       setTranscript((finalText + " " + interim).trim());
     };
-    rec.onerror = (ev: any) => {
+    rec.onerror = (ev) => {
       setListening(false);
       if (ev.error === "not-allowed" || ev.error === "service-not-allowed") {
         void getMicPermissionDiagnostic().then((diagnostic) => {
@@ -212,14 +245,18 @@ export function VoiceEntry() {
   function stop() {
     try {
       recRef.current?.stop();
-    } catch {}
+    } catch {
+      return;
+    }
   }
 
   useEffect(() => {
     return () => {
       try {
         recRef.current?.stop();
-      } catch {}
+      } catch {
+        return;
+      }
     };
   }, []);
 
@@ -229,9 +266,7 @@ export function VoiceEntry() {
         type="button"
         onClick={() => {
           setOpen(true);
-          // must run in the same user-gesture tick, otherwise Chrome on
-          // Android rejects the mic with "not-allowed"
-          start();
+          setError(null);
         }}
         className="group flex w-full items-center gap-4 rounded-3xl bg-gradient-to-l from-violet-500 to-fuchsia-600 p-5 text-white shadow-soft active:scale-[0.99]"
       >
@@ -242,9 +277,7 @@ export function VoiceEntry() {
           <div className="flex items-center justify-end gap-1.5 text-2xl font-black">
             <Sparkles className="h-5 w-5" /> با صدا ثبت کن
           </div>
-          <div className="mt-1 text-xs opacity-90">
-            مثلاً بگو: «توت خشک نهصد تومان فروختم»
-          </div>
+          <div className="mt-1 text-xs opacity-90">مثلاً بگو: «توت خشک نهصد تومان فروختم»</div>
         </div>
       </button>
 
@@ -280,14 +313,30 @@ export function VoiceEntry() {
 
             {!supported && (
               <div className="rounded-xl bg-rose-50 p-3 text-sm text-rose-800">
-                این مرورگر از تشخیص صدا پشتیبانی نمی‌کند. از Google Chrome روی اندروید
-                استفاده کنید.
+                این مرورگر از تشخیص صدا پشتیبانی نمی‌کند. از Google Chrome روی اندروید استفاده کنید.
               </div>
             )}
 
             {supported && (
               <>
                 <div className="flex flex-col items-center gap-3 py-3">
+                  <button
+                    onClick={requestMicAccess}
+                    className={`grid h-12 w-12 place-items-center rounded-full border border-border shadow-soft active:scale-95 disabled:opacity-60 ${
+                      micReady
+                        ? "bg-success text-success-foreground"
+                        : "bg-secondary text-secondary-foreground"
+                    }`}
+                    aria-label="فعال کردن میکروفون"
+                    disabled={checkingMic || listening || parseMut.isPending || saveMut.isPending}
+                    type="button"
+                  >
+                    {checkingMic ? (
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                    ) : (
+                      <Mic className="h-5 w-5" />
+                    )}
+                  </button>
                   {listening ? (
                     <button
                       onClick={stop}
@@ -299,9 +348,9 @@ export function VoiceEntry() {
                   ) : (
                     <button
                       onClick={start}
-                      className="grid h-24 w-24 place-items-center rounded-full bg-violet-600 text-white shadow-lg"
+                      className="grid h-24 w-24 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg disabled:opacity-40"
                       aria-label="ضبط"
-                      disabled={parseMut.isPending || saveMut.isPending}
+                      disabled={!micReady || parseMut.isPending || saveMut.isPending}
                     >
                       <Mic className="h-10 w-10" />
                     </button>
@@ -309,11 +358,15 @@ export function VoiceEntry() {
                   <div className="text-xs text-muted-foreground">
                     {listening
                       ? "در حال شنیدن... حرف بزنید"
-                      : parseMut.isPending
-                        ? "در حال درک..."
-                        : parsed
-                          ? "بررسی کنید و تأیید بزنید"
-                          : "روی دکمه بزنید و بگویید"}
+                      : checkingMic
+                        ? "در حال درخواست دسترسی میکروفون..."
+                        : parseMut.isPending
+                          ? "در حال درک..."
+                          : parsed
+                            ? "بررسی کنید و تأیید بزنید"
+                            : micReady
+                              ? "حالا دکمه بزرگ ضبط را بزنید"
+                              : "اول دکمه کوچک میکروفون را بزنید"}
                   </div>
                 </div>
 
@@ -326,8 +379,7 @@ export function VoiceEntry() {
 
                 {parseMut.isPending && (
                   <div className="mt-3 flex items-center justify-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" /> در حال پردازش با هوش
-                    مصنوعی...
+                    <Loader2 className="h-4 w-4 animate-spin" /> در حال پردازش با هوش مصنوعی...
                   </div>
                 )}
 
@@ -376,9 +428,7 @@ function ParsedPreview({
     <div className="mt-4 space-y-3 text-right">
       <div
         className={`inline-block rounded-full px-3 py-1 text-xs font-black ${
-          parsed.kind === "sale"
-            ? "bg-emerald-100 text-emerald-800"
-            : "bg-sky-100 text-sky-800"
+          parsed.kind === "sale" ? "bg-emerald-100 text-emerald-800" : "bg-sky-100 text-sky-800"
         }`}
       >
         {parsed.kind === "sale" ? "فروش" : "خرید"}
@@ -393,10 +443,7 @@ function ParsedPreview({
 
       <div className="space-y-2">
         {parsed.items.map((it, i) => (
-          <div
-            key={i}
-            className="rounded-2xl border border-border bg-background p-3 text-sm"
-          >
+          <div key={i} className="rounded-2xl border border-border bg-background p-3 text-sm">
             <div className="font-black text-foreground">{it.description}</div>
             <div className="mt-1 flex justify-between text-xs text-muted-foreground num">
               <span>{formatToman(it.unit_price_toman)}</span>
@@ -413,9 +460,7 @@ function ParsedPreview({
 
       {parsed.paid_toman != null && parsed.paid_toman > 0 && (
         <div className="flex justify-between rounded-2xl bg-emerald-50 p-3 text-sm">
-          <span className="font-black num text-emerald-800">
-            {formatToman(parsed.paid_toman)}
-          </span>
+          <span className="font-black num text-emerald-800">{formatToman(parsed.paid_toman)}</span>
           <span className="text-emerald-800/80">پرداختی</span>
         </div>
       )}
@@ -446,9 +491,7 @@ function ParsedPreview({
       </div>
 
       <button
-        onClick={() =>
-          onChange({ ...parsed, kind: parsed.kind === "sale" ? "purchase" : "sale" })
-        }
+        onClick={() => onChange({ ...parsed, kind: parsed.kind === "sale" ? "purchase" : "sale" })}
         className="w-full pt-1 text-xs text-muted-foreground underline"
       >
         اشتباه است؟ تغییر به {parsed.kind === "sale" ? "خرید" : "فروش"}
