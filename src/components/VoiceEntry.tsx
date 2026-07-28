@@ -92,7 +92,7 @@ export function VoiceEntry() {
   const [checkingMic, setCheckingMic] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [manual, setManual] = useState("");
-  const [mode, setMode] = useState<"browser" | "server">("browser");
+  const [mode, setMode] = useState<"browser" | "server">("server");
   const [uploading, setUploading] = useState(false);
   const [parsed, setParsed] = useState<ParsedDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -322,13 +322,14 @@ export function VoiceEntry() {
     }
     setUploading(true);
     try {
-      const buf = new Uint8Array(await blob.arrayBuffer());
+      const wav = await toWav(blob);
+      const buf = new Uint8Array(wav);
       let bin = "";
       for (let i = 0; i < buf.length; i += 0x8000) {
         bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
       }
       const res = await transcribeSpeech({
-        data: { audio_base64: btoa(bin), mime: blob.type || "audio/webm" },
+        data: { audio_base64: btoa(bin), mime: "audio/wav" },
       });
       setTranscript(res.text);
       parseMut.mutate(res.text);
