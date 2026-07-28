@@ -313,8 +313,7 @@ export function VoiceEntry() {
 
             {!supported && (
               <div className="rounded-xl bg-rose-50 p-3 text-sm text-rose-800">
-                این مرورگر از تشخیص صدا پشتیبانی نمی‌کند. از Google Chrome روی اندروید
-                استفاده کنید.
+                این مرورگر از تشخیص صدا پشتیبانی نمی‌کند. از Google Chrome روی اندروید استفاده کنید.
               </div>
             )}
 
@@ -380,8 +379,7 @@ export function VoiceEntry() {
 
                 {parseMut.isPending && (
                   <div className="mt-3 flex items-center justify-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" /> در حال پردازش با هوش
-                    مصنوعی...
+                    <Loader2 className="h-4 w-4 animate-spin" /> در حال پردازش با هوش مصنوعی...
                   </div>
                 )}
 
@@ -430,9 +428,7 @@ function ParsedPreview({
     <div className="mt-4 space-y-3 text-right">
       <div
         className={`inline-block rounded-full px-3 py-1 text-xs font-black ${
-          parsed.kind === "sale"
-            ? "bg-emerald-100 text-emerald-800"
-            : "bg-sky-100 text-sky-800"
+          parsed.kind === "sale" ? "bg-emerald-100 text-emerald-800" : "bg-sky-100 text-sky-800"
         }`}
       >
         {parsed.kind === "sale" ? "فروش" : "خرید"}
@@ -447,10 +443,7 @@ function ParsedPreview({
 
       <div className="space-y-2">
         {parsed.items.map((it, i) => (
-          <div
-            key={i}
-            className="rounded-2xl border border-border bg-background p-3 text-sm"
-          >
+          <div key={i} className="rounded-2xl border border-border bg-background p-3 text-sm">
             <div className="font-black text-foreground">{it.description}</div>
             <div className="mt-1 flex justify-between text-xs text-muted-foreground num">
               <span>{formatToman(it.unit_price_toman)}</span>
@@ -467,9 +460,7 @@ function ParsedPreview({
 
       {parsed.paid_toman != null && parsed.paid_toman > 0 && (
         <div className="flex justify-between rounded-2xl bg-emerald-50 p-3 text-sm">
-          <span className="font-black num text-emerald-800">
-            {formatToman(parsed.paid_toman)}
-          </span>
+          <span className="font-black num text-emerald-800">{formatToman(parsed.paid_toman)}</span>
           <span className="text-emerald-800/80">پرداختی</span>
         </div>
       )}
@@ -500,9 +491,7 @@ function ParsedPreview({
       </div>
 
       <button
-        onClick={() =>
-          onChange({ ...parsed, kind: parsed.kind === "sale" ? "purchase" : "sale" })
-        }
+        onClick={() => onChange({ ...parsed, kind: parsed.kind === "sale" ? "purchase" : "sale" })}
         className="w-full pt-1 text-xs text-muted-foreground underline"
       >
         اشتباه است؟ تغییر به {parsed.kind === "sale" ? "خرید" : "فروش"}
