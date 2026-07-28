@@ -21,6 +21,41 @@ function pickText(value: unknown, depth = 0): string {
   return "";
 }
 
+// OpenAI-compatible fallback (reachable from outside Iran, e.g. the Lovable
+// preview sandbox). Defaults to Requesty, overridable per environment.
+const STT_API_URL = process.env.STT_API_URL ?? "https://router.requesty.ai/v1/audio/transcriptions";
+const STT_API_KEY =
+  process.env.STT_API_KEY ??
+  "rqsty-sk-yDk9nyFNQo2tQy/z+RGheQFtCltlzVli1jZlR9U3gy5RuYZmfdX41DPTxoKULGfVVI0Fs3JnBSBjEM4M0lxmcT0oP6dPOr7jKzhdqh6/KwY=";
+const STT_MODEL = process.env.STT_MODEL ?? "openai/whisper-1";
+
+async function transcribeViaOpenAiCompatible(bin: Uint8Array): Promise<string> {
+  const form = new FormData();
+  form.append("model", STT_MODEL);
+  form.append("language", "fa");
+  form.append("file", new Blob([bin as unknown as BlobPart], { type: "audio/wav" }), "recording.wav");
+
+  const res = await fetch(STT_API_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${STT_API_KEY}` },
+    body: form,
+  });
+  const body = await res.text();
+  if (!res.ok) {
+    if (res.status === 402) {
+      throw new Error("اعتبار سرویس تبدیل گفتار تمام شده است. فعلاً از ورود متنی استفاده کنید.");
+    }
+    throw new Error(`خطای تبدیل گفتار پشتیبان (${res.status})`);
+  }
+  let out = "";
+  try {
+    out = pickText(JSON.parse(body));
+  } catch {
+    out = body;
+  }
+  return out.trim();
+}
+
 export async function transcribeAudio(base64: string, mime: string): Promise<string> {
   const clean = base64.includes(",") ? base64.slice(base64.indexOf(",") + 1) : base64;
   const bin = Uint8Array.from(atob(clean), (c) => c.charCodeAt(0));
@@ -51,14 +86,19 @@ export async function transcribeAudio(base64: string, mime: string): Promise<str
       clearTimeout(timer);
     }
   } catch (err) {
-    console.error("avanegar fetch failed", err);
-    throw new Error(
-      "اتصال به سرویس آوانگار برقرار نشد. این سرویس فقط از سرور ایران (VPS) در دسترس است؛ در محیط پیش‌نمایش کار نمی‌کند. فعلاً از ورود متنی استفاده کنید.",
-    );
+    // Avanegar only accepts connections from inside Iran; outside it we fall
+    // back to the OpenAI-compatible provider automatically.
+    console.error("avanegar fetch failed, trying fallback", err);
+    const fallback = await transcribeViaOpenAiCompatible(bin);
+    if (!fallback) throw new Error("چیزی شنیده نشد، دوباره تلاش کنید.");
+    return fallback;
   }
 
   const text = await res.text();
   if (!res.ok) {
+    console.error("avanegar http error", res.status, text.slice(0, 300));
+    const fallback = await transcribeViaOpenAiCompatible(bin);
+    if (fallback) return fallback;
     if (res.status === 401 || res.status === 403) {
       throw new Error("توکن سرویس آوانگار معتبر نیست یا منقضی شده است.");
     }
