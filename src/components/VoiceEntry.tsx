@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Mic, Square, Sparkles, X, Check, Loader2 } from "lucide-react";
 import { parseSpeechToDoc, type ParsedDoc } from "@/lib/ai-parse.functions";
+import { transcribeSpeech } from "@/lib/transcribe.functions";
 import { createSale, createPurchase } from "@/lib/documents.functions";
 import { listCustomers, saveCustomer } from "@/lib/customers.functions";
 import { formatToman, toFa } from "@/lib/format";
@@ -90,9 +91,14 @@ export function VoiceEntry() {
   const [micReady, setMicReady] = useState(false);
   const [checkingMic, setCheckingMic] = useState(false);
   const [transcript, setTranscript] = useState("");
+  const [manual, setManual] = useState("");
+  const [mode, setMode] = useState<"browser" | "server">("browser");
+  const [uploading, setUploading] = useState(false);
   const [parsed, setParsed] = useState<ParsedDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
   const recRef = useRef<RecognitionInstance | null>(null);
+  const mediaRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
   const qc = useQueryClient();
 
   const supported = !!getSR();
@@ -181,9 +187,14 @@ export function VoiceEntry() {
   }
 
   function start() {
+    if (mode === "server") {
+      void startServerRecording();
+      return;
+    }
     const SRCtor = getSR();
     if (!SRCtor) {
-      setError("این مرورگر از تشخیص صدا پشتیبانی نمی‌کند. لطفاً از Chrome استفاده کنید.");
+      setMode("server");
+      void startServerRecording();
       return;
     }
     if (typeof window !== "undefined" && !window.isSecureContext) {
@@ -215,9 +226,21 @@ export function VoiceEntry() {
       setListening(false);
       if (ev.error === "not-allowed" || ev.error === "service-not-allowed") {
         void getMicPermissionDiagnostic().then((diagnostic) => {
-          const msg = speechErrorMessage(ev.error, diagnostic);
-          if (msg) setError(msg);
+          if (diagnostic.permission === "denied" || !diagnostic.secure) {
+            const msg = speechErrorMessage(ev.error, diagnostic);
+            if (msg) setError(msg);
+            return;
+          }
+          // Permission is fine — Chrome's Google speech service is unreachable.
+          // Switch to recording the audio and transcribing it on our server.
+          setMode("server");
+          void startServerRecording();
         });
+        return;
+      }
+      if (ev.error === "network") {
+        setMode("server");
+        void startServerRecording();
         return;
       }
 
@@ -243,10 +266,76 @@ export function VoiceEntry() {
   }
 
   function stop() {
+    if (mode === "server") {
+      try {
+        mediaRef.current?.stop();
+      } catch {
+        setListening(false);
+      }
+      return;
+    }
     try {
       recRef.current?.stop();
     } catch {
       return;
+    }
+  }
+
+  async function startServerRecording() {
+    setError(null);
+    setTranscript("");
+    setParsed(null);
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setError("این مرورگر امکان ضبط صدا ندارد. لطفاً متن را دستی بنویسید.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = ["audio/webm", "audio/mp4", "audio/ogg"].find(
+        (t) => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(t),
+      );
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      chunksRef.current = [];
+      mr.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      mr.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setListening(false);
+        const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
+        void uploadForTranscription(blob);
+      };
+      mediaRef.current = mr;
+      mr.start();
+      setMicReady(true);
+      setListening(true);
+    } catch {
+      const diagnostic = await getMicPermissionDiagnostic();
+      setError(speechErrorMessage("not-allowed", diagnostic));
+    }
+  }
+
+  async function uploadForTranscription(blob: Blob) {
+    if (blob.size < 2048) {
+      setError("ضبط خیلی کوتاه بود، دوباره تلاش کنید.");
+      return;
+    }
+    setUploading(true);
+    try {
+      const buf = new Uint8Array(await blob.arrayBuffer());
+      let bin = "";
+      for (let i = 0; i < buf.length; i += 0x8000) {
+        bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+      }
+      const res = await transcribeSpeech({
+        data: { audio_base64: btoa(bin), mime: blob.type || "audio/webm" },
+      });
+      setTranscript(res.text);
+      parseMut.mutate(res.text);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "خطا در تبدیل گفتار");
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -312,12 +401,12 @@ export function VoiceEntry() {
             </div>
 
             {!supported && (
-              <div className="rounded-xl bg-rose-50 p-3 text-sm text-rose-800">
-                این مرورگر از تشخیص صدا پشتیبانی نمی‌کند. از Google Chrome روی اندروید استفاده کنید.
+              <div className="mb-2 rounded-xl bg-amber-50 p-3 text-xs text-amber-900">
+                تشخیص گفتار مرورگر در دسترس نیست؛ صدا ضبط و روی سرور تبدیل می‌شود.
               </div>
             )}
 
-            {supported && (
+            {true && (
               <>
                 <div className="flex flex-col items-center gap-3 py-3">
                   <button
@@ -350,14 +439,18 @@ export function VoiceEntry() {
                       onClick={start}
                       className="grid h-24 w-24 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg disabled:opacity-40"
                       aria-label="ضبط"
-                      disabled={!micReady || parseMut.isPending || saveMut.isPending}
+                      disabled={!micReady || uploading || parseMut.isPending || saveMut.isPending}
                     >
                       <Mic className="h-10 w-10" />
                     </button>
                   )}
                   <div className="text-xs text-muted-foreground">
                     {listening
-                      ? "در حال شنیدن... حرف بزنید"
+                      ? mode === "server"
+                        ? "در حال ضبط... بعد از حرف زدن، دکمه توقف را بزنید"
+                        : "در حال شنیدن... حرف بزنید"
+                      : uploading
+                        ? "در حال تبدیل صدا به متن..."
                       : checkingMic
                         ? "در حال درخواست دسترسی میکروفون..."
                         : parseMut.isPending
@@ -368,6 +461,29 @@ export function VoiceEntry() {
                               ? "حالا دکمه بزرگ ضبط را بزنید"
                               : "اول دکمه کوچک میکروفون را بزنید"}
                   </div>
+                </div>
+
+                <div className="mt-3 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const t = manual.trim();
+                      if (!t) return;
+                      setError(null);
+                      setTranscript(t);
+                      parseMut.mutate(t);
+                    }}
+                    disabled={parseMut.isPending || saveMut.isPending || !manual.trim()}
+                    className="rounded-xl bg-secondary px-3 py-2 text-xs font-black text-secondary-foreground disabled:opacity-40"
+                  >
+                    ثبت متن
+                  </button>
+                  <input
+                    value={manual}
+                    onChange={(e) => setManual(e.target.value)}
+                    placeholder="یا اینجا بنویسید: توت خشک نهصد تومان فروختم"
+                    className="flex-1 rounded-xl border border-border bg-background p-2 text-right text-sm"
+                  />
                 </div>
 
                 {transcript && (
