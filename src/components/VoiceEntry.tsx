@@ -90,6 +90,8 @@ function speechErrorMessage(
 export function VoiceEntry() {
   const [open, setOpen] = useState(false);
   const [listening, setListening] = useState(false);
+  const [micReady, setMicReady] = useState(false);
+  const [checkingMic, setCheckingMic] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [parsed, setParsed] = useState<ParsedDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -151,6 +153,35 @@ export function VoiceEntry() {
     setListening(false);
   }
 
+  async function requestMicAccess() {
+    setError(null);
+    if (typeof window !== "undefined" && !window.isSecureContext) {
+      setError(
+        "برای استفاده از میکروفون باید سایت با HTTPS باز شود (آدرس امن). با http:// کروم دسترسی میکروفون را رد می‌کند.",
+      );
+      return;
+    }
+
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setError("این مرورگر اجازه درخواست مستقیم میکروفون را نمی‌دهد. از Chrome به‌روز استفاده کنید.");
+      return;
+    }
+
+    setCheckingMic(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
+      setMicReady(true);
+      setError(null);
+    } catch (e) {
+      const diagnostic = await getMicPermissionDiagnostic();
+      const message = e instanceof DOMException ? e.name : "not-allowed";
+      setError(speechErrorMessage(message === "NotAllowedError" ? "not-allowed" : message, diagnostic));
+    } finally {
+      setCheckingMic(false);
+    }
+  }
+
   function start() {
     const SRCtor = getSR();
     if (!SRCtor) {
@@ -161,6 +192,10 @@ export function VoiceEntry() {
       setError(
         "برای استفاده از میکروفون باید سایت با HTTPS باز شود (آدرس امن). با http:// کروم دسترسی میکروفون را رد می‌کند.",
       );
+      return;
+    }
+    if (!micReady) {
+      setError("اول با دکمه کوچک، دسترسی میکروفون را فعال کنید؛ بعد دکمه بزرگ ضبط را بزنید.");
       return;
     }
     reset();
@@ -229,9 +264,7 @@ export function VoiceEntry() {
         type="button"
         onClick={() => {
           setOpen(true);
-          // must run in the same user-gesture tick, otherwise Chrome on
-          // Android rejects the mic with "not-allowed"
-          start();
+          setError(null);
         }}
         className="group flex w-full items-center gap-4 rounded-3xl bg-gradient-to-l from-violet-500 to-fuchsia-600 p-5 text-white shadow-soft active:scale-[0.99]"
       >
@@ -288,6 +321,17 @@ export function VoiceEntry() {
             {supported && (
               <>
                 <div className="flex flex-col items-center gap-3 py-3">
+                  <button
+                    onClick={requestMicAccess}
+                    className={`grid h-12 w-12 place-items-center rounded-full border border-border shadow-soft active:scale-95 disabled:opacity-60 ${
+                      micReady ? "bg-success text-success-foreground" : "bg-secondary text-secondary-foreground"
+                    }`}
+                    aria-label="فعال کردن میکروفون"
+                    disabled={checkingMic || listening || parseMut.isPending || saveMut.isPending}
+                    type="button"
+                  >
+                    {checkingMic ? <Loader2 className="h-5 w-5 animate-spin" /> : <Mic className="h-5 w-5" />}
+                  </button>
                   {listening ? (
                     <button
                       onClick={stop}
@@ -299,9 +343,9 @@ export function VoiceEntry() {
                   ) : (
                     <button
                       onClick={start}
-                      className="grid h-24 w-24 place-items-center rounded-full bg-violet-600 text-white shadow-lg"
+                      className="grid h-24 w-24 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg disabled:opacity-40"
                       aria-label="ضبط"
-                      disabled={parseMut.isPending || saveMut.isPending}
+                      disabled={!micReady || parseMut.isPending || saveMut.isPending}
                     >
                       <Mic className="h-10 w-10" />
                     </button>
@@ -309,10 +353,14 @@ export function VoiceEntry() {
                   <div className="text-xs text-muted-foreground">
                     {listening
                       ? "در حال شنیدن... حرف بزنید"
+                      : checkingMic
+                        ? "در حال درخواست دسترسی میکروفون..."
                       : parseMut.isPending
                         ? "در حال درک..."
                         : parsed
                           ? "بررسی کنید و تأیید بزنید"
+                          : micReady
+                            ? "حالا دکمه بزرگ ضبط را بزنید"
                           : "روی دکمه بزنید و بگویید"}
                   </div>
                 </div>
