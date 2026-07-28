@@ -39,17 +39,37 @@ const SYSTEM_PROMPT = `شما یک دستیار حسابداری فارسی هس
   ]
 }`;
 
+// Models sometimes return null / strings ("۹۰۰", "900,000") for numbers.
+const num = (fallback: number | null) =>
+  z.preprocess((v) => {
+    if (v === null || v === undefined || v === "") return fallback;
+    if (typeof v === "number") return v;
+    if (typeof v === "string") {
+      const fa = "۰۱۲۳۴۵۶۷۸۹";
+      const ar = "٠١٢٣٤٥٦٧٨٩";
+      const normalized = v
+        .replace(/[۰-۹]/g, (d) => String(fa.indexOf(d)))
+        .replace(/[٠-٩]/g, (d) => String(ar.indexOf(d)))
+        .replace(/[,\s\u066c]/g, "");
+      const n = Number(normalized);
+      return Number.isFinite(n) ? n : fallback;
+    }
+    return fallback;
+  }, fallback === null ? z.number().nullable() : z.number());
+
 const ParsedSchema = z.object({
   kind: z.enum(["sale", "purchase"]),
   customer_name: z.string().nullable().optional(),
-  paid_toman: z.number().nullable().optional(),
+  paid_toman: num(null).optional(),
   notes: z.string().nullable().optional(),
   items: z
     .array(
       z.object({
         description: z.string().min(1),
-        quantity: z.number().positive(),
-        unit_price_toman: z.number().int().nonnegative(),
+        quantity: num(1).pipe(z.number().positive()),
+        unit_price_toman: num(0).pipe(
+          z.number().nonnegative().transform((n) => Math.round(n)),
+        ),
       }),
     )
     .min(1),
